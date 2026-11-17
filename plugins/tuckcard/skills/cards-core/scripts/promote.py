@@ -457,6 +457,8 @@ def promote(
     for path, text in rule_texts.items():
         files.write_if_changed(path, text)
     for path, text in gap_texts.items():
+        # Only files whose text the rewrite changed are in here, so a plain write
+        # is write_if_changed without the comparison it would repeat.
         path.write_text(text, encoding="utf-8")
         summary.append("{}: references rewritten".format(path))
 
