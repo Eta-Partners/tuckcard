@@ -29,6 +29,12 @@ jobs:
           set -uo pipefail
           findings=plugins/tuckcard/skills/cards-core/knowledge/findings
           count=$(find "$findings" -maxdepth 1 -name 'F-*.md' | wc -l | tr -d ' ')
+          case "$count" in
+            '' | *[!0-9]*)
+              echo "::error::could not count findings under $findings"
+              exit 1
+              ;;
+          esac
           if [ "$count" -eq 0 ]; then
             echo "Nothing to re-check yet: no shipped findings exist (milestone M5)."
             echo "No check ran in this run, so this is not a pass."
@@ -44,7 +50,10 @@ jobs:
             # so the reader sees which source and why without digging.
             pattern='(^|: )(could not check|quarantine|would quarantine):'
             if grep -qE "$pattern" "$log"; then
-              grep -E "$pattern" "$log" | sed 's/^/::error::/'
+              # A workflow command treats % and CR as escapes, so a URL or a
+              # path carrying either would corrupt the annotation. Encode them.
+              grep -E "$pattern" "$log" \
+                | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/^/::error::/'
             else
               echo "::error::the check failed without naming a finding; see the log above"
             fi
