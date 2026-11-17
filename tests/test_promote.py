@@ -1,5 +1,7 @@
 """Promotion: renumbering, reference rewrite, quarantine and the index."""
 
+import io
+
 import support
 import promote
 
@@ -296,3 +298,21 @@ def test_promotion_keeps_comments_quotes_and_nulls_it_did_not_touch(
     # The promoted rule did land, so the write happened and kept the rest.
     assert "R-academics-002" in after
 
+
+
+def test_a_rule_write_does_not_change_how_other_files_spell_null():
+    """The null representer belongs to one writer, not to the whole process.
+
+    ruamel's `add_representer` is a class method, so a rule writer that installs
+    it there changes every later write in the same run: a finding written after
+    a promote would gain `key: null` where it had `key:`, which is the reformat
+    churn this work exists to remove. Write order is not something a caller
+    should have to know, so the property is order independence.
+    """
+    support.files.rule_yaml()
+    plain = io.StringIO()
+    support.files.yaml_out().dump({"a": None}, plain)
+    assert plain.getvalue().strip() == "a:"
+    rules = io.StringIO()
+    support.files.rule_yaml().dump({"a": None}, rules)
+    assert rules.getvalue().strip() == "a: null"

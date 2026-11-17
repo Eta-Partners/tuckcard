@@ -73,17 +73,23 @@ def rule_yaml() -> YAML:
     person wrote. `preserve_quotes` keeps a quoted scalar quoted, and the null
     representer keeps an explicit `null` spelled that way: ruamel's round-trip
     loader hands back None for it, and the plain writer then emits `key:`,
-    which is a different file to a diff. Measured over the 21 rule files under
+    which is a different file to a diff. Measured over the 24 rule files under
     knowledge/rules, loading and dumping with this pair is byte-identical on
-    every one; with yaml_out alone all 21 differ.
+    every one.
+
+    The null representer is installed on a copy of the representer table held by
+    this one writer. ruamel's `add_representer` is a class method, so calling it
+    would change every YAML writer in the process, and a finding written later
+    in the same run would gain `key: null` where it had `key:`. The write order
+    is not something a caller should have to know.
     """
     yaml = yaml_roundtrip()
-    yaml.representer.add_representer(
-        type(None),
-        lambda representer, _data: representer.represent_scalar(
-            "tag:yaml.org,2002:null", "null"
-        ),
+    representer = yaml.representer
+    representers = dict(type(representer).yaml_representers)
+    representers[type(None)] = lambda writer, _data: writer.represent_scalar(
+        "tag:yaml.org,2002:null", "null"
     )
+    representer.yaml_representers = representers
     return yaml
 
 
