@@ -28,13 +28,12 @@ jobs:
         run: |
           set -uo pipefail
           findings=plugins/tuckcard/skills/cards-core/knowledge/findings
-          count=$(find "$findings" -maxdepth 1 -name 'F-*.md' | wc -l | tr -d ' ')
-          case "$count" in
-            '' | *[!0-9]*)
-              echo "::error::could not count findings under $findings"
-              exit 1
-              ;;
-          esac
+          # Test the assignment itself: without set -e a failing find would leave
+          # count at 0, and the run would report "nothing to re-check" as a pass.
+          if ! count=$(find "$findings" -maxdepth 1 -name 'F-*.md' | wc -l | tr -d ' '); then
+            echo "::error::could not count findings under $findings"
+            exit 1
+          fi
           if [ "$count" -eq 0 ]; then
             echo "Nothing to re-check yet: no shipped findings exist (milestone M5)."
             echo "No check ran in this run, so this is not a pass."
