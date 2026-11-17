@@ -1024,7 +1024,7 @@ Every assumption raised during planning, with its outcome. "Revised" means a lat
 | BF | Three layouts ship: `stacked` (default), `notebook`, `index` | Confirmed |
 | BG | README keeps the 988 line in its disclaimer, since it addresses the adult installing the plugin | Default taken; maintainer can drop it |
 | BH | The earlier look is retired after the P3 comparison (six of seven signatures matched a commercial deck) | Confirmed |
-| BI | Only HTTP 404 and 410, a metadata mismatch or a retraction quarantine a finding. Every other non-200 says something about our access to the page, so it is retried and then reported as `could not check` with its status, and the finding stays where it is. A quarantined finding keeps its previous `checked_on`, because that date records the last time the source was verified | Confirmed; a bot-mitigated host answering 202 to GitHub egress is the case that forced it |
+| BI | Only HTTP 404 and 410, a metadata mismatch or a retraction quarantine a finding. Every other non-200 says something about our access to the page, so it is retried and then reported as `could not check` with its status, and the finding stays where it is. A quarantined finding keeps its previous `checked_on`, because that date records the last time the source was verified; the date the verdict was reached is the commit that moved the file | Confirmed; a bot-mitigated host answering 202 to GitHub egress is the case that forced it |
 
 ---
 

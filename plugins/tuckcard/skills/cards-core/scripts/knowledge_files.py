@@ -77,6 +77,15 @@ def yaml_out() -> YAML:
 
 
 def load_yaml(path: Path) -> Any:
+    """Read a YAML file as plain types.
+
+    This stays on the safe loader on purpose: callers here validate and compare
+    data, and none of them write it back. A file that is read and then written
+    must be read with read_frontmatter (or yaml_roundtrip directly), because
+    only a round-trip load keeps the quoting and comments a write would
+    otherwise drop. promote.py writes rule files through this reader today, so
+    those writes still reformat them.
+    """
     with path.open("r", encoding="utf-8") as handle:
         return normalize(yaml_safe().load(handle))
 
