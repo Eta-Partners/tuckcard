@@ -56,7 +56,7 @@ Tuckcard is at version 0.1.0. What is true today:
 Requires Claude Code, and Python 3.9 or newer for the scripts the skills call.
 
 ```sh
-claude plugin marketplace add tjmustard/tuckcard
+claude plugin marketplace add Eta-Partners/tuckcard
 claude plugin install tuckcard@tuckcard
 ```
 

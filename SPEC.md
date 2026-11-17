@@ -77,7 +77,7 @@ A web UI or hosted service; AI image generation; non-English decks; several deck
 
 | Thing | Name |
 |---|---|
-| Repository | `tuckcard` (github.com/tjmustard/tuckcard) |
+| Repository | `tuckcard` (github.com/Eta-Partners/tuckcard) |
 | Marketplace | `tuckcard` |
 | Plugin | `tuckcard` |
 | Skills | `cards-core`, `cards-new`, `cards-research`, `cards-draft`, `cards-review`, `cards-render`, `cards-restyle` |
