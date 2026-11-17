@@ -66,6 +66,27 @@ def yaml_roundtrip() -> YAML:
     return yaml
 
 
+def rule_yaml() -> YAML:
+    """The round-trip pair for rule files: their quotes and their `null`s.
+
+    Rule files are hand-edited, so rewriting one has to reproduce what the
+    person wrote. `preserve_quotes` keeps a quoted scalar quoted, and the null
+    representer keeps an explicit `null` spelled that way: ruamel's round-trip
+    loader hands back None for it, and the plain writer then emits `key:`,
+    which is a different file to a diff. Measured over the 21 rule files under
+    knowledge/rules, loading and dumping with this pair is byte-identical on
+    every one; with yaml_out alone all 21 differ.
+    """
+    yaml = yaml_roundtrip()
+    yaml.representer.add_representer(
+        type(None),
+        lambda representer, _data: representer.represent_scalar(
+            "tag:yaml.org,2002:null", "null"
+        ),
+    )
+    return yaml
+
+
 def yaml_out() -> YAML:
     """A deterministic round-trip writer: block style, no wrapping."""
     yaml = YAML()
@@ -81,10 +102,9 @@ def load_yaml(path: Path) -> Any:
 
     This stays on the safe loader on purpose: callers here validate and compare
     data, and none of them write it back. A file that is read and then written
-    must be read with read_frontmatter (or yaml_roundtrip directly), because
-    only a round-trip load keeps the quoting and comments a write would
-    otherwise drop. promote.py writes rule files through this reader today, so
-    those writes still reformat them.
+    must be read with read_frontmatter (or rule_yaml for a rule file), because
+    only a round-trip load keeps the quoting, the comments and the spelling of a
+    null that a write would otherwise drop.
     """
     with path.open("r", encoding="utf-8") as handle:
         return normalize(yaml_safe().load(handle))

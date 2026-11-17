@@ -4,6 +4,34 @@ import support
 import promote
 
 
+# A rule file as a person leaves one: a header comment, an inline comment, a
+# quoted description and explicit `null`s. Promotion re-renders every rule file
+# it reads, so these are the things a rewrite must not quietly drop.
+HAND_EDITED = """\
+# Header note: this file is edited by hand.
+scope: {scope}   # the band this file serves
+status: active
+description: 'Quoted description, kept as written.'
+rules:
+  - id: {rule_id}
+    type: avoid
+    strength: should
+    applies_to:
+      - title
+      - lines
+      - notes
+    when: null
+    overrides: []
+    text: Keep the lines specific and doable.
+    why: Specific, doable lines are easier to act on.
+    cites:
+      - F-0001
+    check: judge
+    lint: null
+    examples: null
+"""
+
+
 def tree(tmp_path):
     knowledge = support.base_knowledge(tmp_path / "knowledge")
     gaps = knowledge / "gaps"
@@ -230,3 +258,41 @@ def test_promotion_moves_a_fetch_verified_finding_to_active(tmp_path, capsys):
     data, _ = support.files.read_frontmatter(knowledge / "findings/F-0004.md")
     assert data["status"] == "active"
     assert data["verification"]["exists"] == "script"
+
+
+def test_promotion_leaves_an_untouched_rule_file_byte_identical(tmp_path, capsys):
+    """A rule file the promotion does not add to comes out as it went in."""
+    knowledge, source = tree(tmp_path)
+    history = knowledge / "rules/context/history.yaml"
+    text = HAND_EDITED.format(scope="context/history", rule_id="R-history-001")
+    history.parent.mkdir(parents=True, exist_ok=True)
+    history.write_text(text, encoding="utf-8")
+
+    assert promote_main(source, knowledge) == 0, capsys.readouterr().out
+
+    assert history.read_text(encoding="utf-8") == text
+
+
+def test_promotion_keeps_comments_quotes_and_nulls_it_did_not_touch(
+    tmp_path, capsys
+):
+    """A rule appended to a hand-edited file leaves that file's own prose alone."""
+    knowledge, source = tree(tmp_path)
+    academics = knowledge / "rules/context/academics.yaml"
+    academics.parent.mkdir(parents=True, exist_ok=True)
+    academics.write_text(
+        HAND_EDITED.format(scope="context/academics", rule_id="R-academics-001"),
+        encoding="utf-8",
+    )
+
+    assert promote_main(source, knowledge) == 0, capsys.readouterr().out
+
+    after = academics.read_text(encoding="utf-8")
+    assert after.startswith("# Header note: this file is edited by hand.\n")
+    assert "scope: context/academics   # the band this file serves" in after
+    assert "description: 'Quoted description, kept as written.'" in after
+    assert "    when: null\n" in after
+    assert "    lint: null\n" in after
+    # The promoted rule did land, so the write happened and kept the rest.
+    assert "R-academics-002" in after
+

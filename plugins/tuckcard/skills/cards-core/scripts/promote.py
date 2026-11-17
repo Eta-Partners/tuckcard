@@ -320,7 +320,7 @@ def promote(
                 )
             )
             continue
-        yaml = files.yaml_out()
+        yaml = files.rule_yaml()
         with path.open("r", encoding="utf-8") as handle:
             target_by_scope[scope] = (path, yaml.load(handle))
     if errors:
@@ -356,7 +356,7 @@ def promote(
         from io import StringIO
 
         stream = StringIO()
-        files.yaml_out().dump(roundtrip, stream)
+        files.rule_yaml().dump(roundtrip, stream)
         text = stream.getvalue()
         rule_texts[path] = text
         final_rule_docs.append((path, files.yaml_loads(text)))
