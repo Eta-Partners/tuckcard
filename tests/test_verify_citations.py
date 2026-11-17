@@ -288,6 +288,43 @@ def test_a_deferred_page_is_could_not_check_not_a_quarantine(tmp_path, capsys, m
     assert len(waits) == 2
 
 
+def test_an_incomplete_recording_is_could_not_check_not_a_quarantine(
+    tmp_path, capsys, monkeypatch
+):
+    """A fixture that lacks the URL is a gap in the harness, not a dead source.
+
+    RecordedTransport used to answer a missing entry with VerifyError, the same
+    error a 404 raises, so a probe with one recorded URL quarantined every
+    finding it was pointed at. The finding must stay where it is, byte for byte,
+    and the run must name the URL the recording lacks.
+    """
+    no_sleep(monkeypatch)
+    root = knowledge(tmp_path)
+    path = support.write_finding(
+        root / "findings", support.finding("F-0001", source={"doi": "10.1234/example.valid"})
+    )
+    before = path.read_bytes()
+    responses = tmp_path / "incomplete.json"
+    responses.write_text("{}", encoding="utf-8")
+
+    args = [
+        "--knowledge", str(root),
+        "--responses", str(responses),
+        "--today", "2026-11-11",
+    ]
+    assert verify_citations.main(args) == 1
+
+    assert path.is_file()
+    assert path.read_bytes() == before
+    assert not any((root / "quarantine").iterdir())
+    out = capsys.readouterr().out
+    assert "could not check: {}".format(path) in out
+    assert (
+        "no recorded response for https://api.crossref.org/works/10.1234%2Fexample.valid"
+        in out
+    )
+
+
 @pytest.mark.parametrize(
     "name, status",
     [("missing.html", 404), ("withdrawn.html", 410)],

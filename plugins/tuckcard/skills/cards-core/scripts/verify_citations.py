@@ -136,7 +136,11 @@ class RecordedTransport:
     def get(self, url: str) -> Response:
         entry = self.mapping.get(url)
         if entry is None:
-            raise VerifyError("no recorded response for {}".format(url))
+            # A gap in the recording is a fact about this transport, not about
+            # the source, so it must not become a finding's reason: VerifyError
+            # would quarantine the finding and move a live file out of the pool
+            # because a fixture was incomplete.
+            raise CouldNotCheck("no recorded response for {}".format(url))
         if isinstance(entry, dict):
             status = entry.get("status", 200)
             body = entry.get("body", "")

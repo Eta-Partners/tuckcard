@@ -4,6 +4,7 @@ import io
 
 import support
 import promote
+import verify_citations
 
 
 # A rule file as a person leaves one: a header comment, an inline comment, a
@@ -241,6 +242,52 @@ def test_promotion_refuses_a_doi_already_in_quarantine(tmp_path, capsys):
     assert promote_main(source, knowledge) == 1
     out = capsys.readouterr().out
     assert "already held by F-0007" in out
+
+
+def test_a_promotion_that_could_not_check_writes_nothing(tmp_path, capsys, monkeypatch):
+    """A check that did not complete is not a reason to quarantine a finding.
+
+    The source is neither shipped nor quarantined: the whole promotion stops
+    and says which URL it could not answer for.
+    """
+    monkeypatch.setattr(verify_citations, "_wait", lambda seconds: None)
+    knowledge = support.base_knowledge(tmp_path / "knowledge")
+    source = tmp_path / "source"
+    support.write_finding(
+        source / "findings",
+        support.finding("L-0001", source={"doi": "10.1234/example.unrecorded"}),
+    )
+    before = {
+        path: path.read_bytes()
+        for path in sorted(knowledge.rglob("*"))
+        if path.is_file()
+    }
+    responses = tmp_path / "incomplete.json"
+    responses.write_text("{}", encoding="utf-8")
+
+    code = promote.main(
+        [
+            "--source",
+            str(source),
+            "--knowledge",
+            str(knowledge),
+            "--responses",
+            str(responses),
+            "--today",
+            "2026-11-11",
+        ]
+    )
+
+    assert code == 1
+    after = {
+        path: path.read_bytes()
+        for path in sorted(knowledge.rglob("*"))
+        if path.is_file()
+    }
+    assert after == before
+    out = capsys.readouterr().out
+    assert "could not check, nothing was promoted" in out
+    assert "https://api.crossref.org/works/10.1234%2Fexample.unrecorded" in out
 
 
 def test_promotion_moves_a_fetch_verified_finding_to_active(tmp_path, capsys):

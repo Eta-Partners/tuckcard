@@ -206,10 +206,9 @@ def promote(
     seen_incoming: Dict[str, str] = {}
     results = []
     for path, data, body in incoming:
-        result = verify_citations.verify_finding(
-            data, transport, domains, allowlist_error, today
-        )
-        updated = verify_citations.apply_checked(data, result)
+        # A DOI the pool already holds is refused before anything is fetched:
+        # the answer does not depend on the source, and a lookup that fails
+        # must not change what the person is told.
         record = data.get("source") if isinstance(data.get("source"), dict) else {}
         doi = record.get("doi")
         if isinstance(doi, str) and doi.strip():
@@ -221,8 +220,18 @@ def promote(
                         path, doi, holder
                     )
                 )
-            else:
-                seen_incoming[key] = str(data.get("id"))
+                continue
+            seen_incoming[key] = str(data.get("id"))
+        try:
+            result = verify_citations.verify_finding(
+                data, transport, domains, allowlist_error, today
+            )
+        except verify_citations.CouldNotCheck as error:
+            # Nothing was learned about the source, so promotion stops instead of
+            # quarantining a finding on a check that never completed.
+            errors.append("{}: could not check, nothing was promoted: {}".format(path, error))
+            continue
+        updated = verify_citations.apply_checked(data, result)
         if result["ok"] and updated.get("status") not in ("active", "contested"):
             errors.append(
                 "{}: {} is {}; only active or contested findings may ship "
