@@ -33,11 +33,23 @@ TEMPLATE_NAMES = {"_TEMPLATE.yaml", "_TEMPLATE.md"}
 
 
 def normalize(value: Any) -> Any:
-    """Turn YAML dates and times into the strings the schemas expect."""
+    """Turn YAML dates and times into the strings the schemas expect.
+
+    Containers are edited in place, not rebuilt, so a round-trip load keeps the
+    scalar styles it read: a quoted claim stays quoted when the file is written
+    back. A rebuild into plain dicts and lists loses that style, and every write
+    would then reformat every line the file holds.
+    """
     if isinstance(value, dict):
-        return {str(key): normalize(item) for key, item in value.items()}
+        for key in list(value.keys()):
+            value[key] = normalize(value[key])
+            if not isinstance(key, str):
+                value[str(key)] = value.pop(key)
+        return value
     if isinstance(value, list):
-        return [normalize(item) for item in value]
+        for index, item in enumerate(value):
+            value[index] = normalize(item)
+        return value
     if isinstance(value, (datetime.date, datetime.datetime)):
         return value.isoformat()
     return value
@@ -45,6 +57,13 @@ def normalize(value: Any) -> Any:
 
 def yaml_safe() -> YAML:
     return YAML(typ="safe")
+
+
+def yaml_roundtrip() -> YAML:
+    """A reader that keeps quoting and comments so a write can preserve them."""
+    yaml = yaml_out()
+    yaml.preserve_quotes = True
+    return yaml
 
 
 def yaml_out() -> YAML:
@@ -70,7 +89,7 @@ def dump_yaml(data: Any) -> str:
     from io import StringIO
 
     stream = StringIO()
-    yaml_out().dump(data, stream)
+    yaml_roundtrip().dump(data, stream)
     return stream.getvalue()
 
 
@@ -95,7 +114,7 @@ def read_frontmatter(path: Path) -> Tuple[Dict[str, Any], str]:
     frontmatter, body = split_frontmatter(text)
     if frontmatter is None:
         raise ValueError("no YAML frontmatter")
-    data = normalize(yaml_safe().load(frontmatter))
+    data = normalize(yaml_roundtrip().load(frontmatter))
     if not isinstance(data, dict):
         raise ValueError("frontmatter is not a mapping")
     return data, body

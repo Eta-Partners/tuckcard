@@ -59,7 +59,9 @@ def test_fake_doi_is_quarantined_and_nothing_is_left_behind(tmp_path):
     assert "10.1234/example.fake" in data["quarantine_reason"]
     assert "did not resolve" in data["quarantine_reason"]
     assert "HTTP 404" in data["quarantine_reason"]
-    assert data["verification"]["checked_on"] == "2026-11-11"
+    # The source was not verified, so the date stays at its last real check
+    # (support.BASE_FINDING records 2026-11-10). The verdict is in `exists`.
+    assert data["verification"]["checked_on"] == "2026-11-10"
     # exists records whether the source resolved, not whether it passed.
     assert data["verification"]["exists"] == "none"
 
@@ -257,6 +259,97 @@ def test_a_busy_service_leaves_the_finding_in_place(tmp_path, capsys, monkeypatc
     assert len(waits) == 2
 
 
+def deferred_source(url):
+    return {"doi": None, "pmid": None, "url": url, "title": None}
+
+
+def test_a_deferred_page_is_could_not_check_not_a_quarantine(tmp_path, capsys, monkeypatch):
+    """202 Accepted is the server deferring us, not the source being gone.
+
+    A bot-mitigated host answers 202 to a scripted GET from one network and 200
+    from another. Quarantining on that moves a live source out of the pool, so
+    the finding stays exactly where it is and the run says it could not check.
+    """
+    waits = no_sleep(monkeypatch)
+    root = knowledge(tmp_path)
+    path = support.write_finding(
+        root / "findings",
+        support.finding(
+            "F-0001", source=deferred_source("https://www.cdc.gov/example/deferred.html")
+        ),
+    )
+    assert run(root) == 1
+    assert path.is_file()
+    assert not any((root / "quarantine").iterdir())
+    out = capsys.readouterr().out
+    assert "could not check: {}".format(path) in out
+    # Retried like any other try-later status before the run gives up on it.
+    assert "HTTP 202 after 3 attempts" in out
+    assert len(waits) == 2
+
+
+@pytest.mark.parametrize(
+    "name, status",
+    [("missing.html", 404), ("withdrawn.html", 410)],
+)
+def test_a_gone_page_is_still_quarantined(tmp_path, name, status):
+    """404 and 410 are the two statuses that say the page is not there."""
+    root = knowledge(tmp_path)
+    support.write_finding(
+        root / "findings",
+        support.finding(
+            "F-0001", source=deferred_source("https://www.cdc.gov/example/" + name)
+        ),
+    )
+    assert run(root) == 1
+    assert "HTTP {}".format(status) in quarantined(root)["quarantine_reason"]
+    assert not (root / "findings" / "F-0001.md").exists()
+
+
+def test_a_202_that_clears_on_retry_passes(tmp_path, monkeypatch):
+    """A host that defers once and then answers is a source that resolves."""
+    waits = no_sleep(monkeypatch)
+
+    class Deferring:
+        def __init__(self):
+            self.calls = 0
+
+        def get(self, url):
+            self.calls += 1
+            if self.calls < 3:
+                return verify_citations.Response(202, "")
+            return verify_citations.Response(
+                200,
+                "<html><head><title>Sleep and Your Child</title></head></html>",
+            )
+
+    root = knowledge(tmp_path)
+    path = support.write_finding(
+        root / "findings",
+        support.finding(
+            "F-0001",
+            source={
+                "doi": None,
+                "pmid": None,
+                "url": "https://www.cdc.gov/example/sleep.html",
+                "title": "Sleep and Your Child",
+            },
+        ),
+    )
+    passed, lines = verify_citations.check_path(
+        path,
+        Deferring(),
+        ["cdc.gov"],
+        None,
+        root / "quarantine",
+        "2026-11-11",
+        move=True,
+    )
+    assert passed is True, lines
+    assert len(waits) == 2
+    assert shipped(root)["verification"]["exists"] == "script"
+
+
 def test_a_timeout_leaves_the_finding_in_place(tmp_path, monkeypatch):
     no_sleep(monkeypatch)
 
@@ -371,3 +464,48 @@ def test_contact_parameters_come_from_the_environment(monkeypatch):
     )
     assert "email=contact%40example.org" in verify_citations.pubmed_url(12345678)
 
+
+def test_a_pass_changes_only_the_checked_date(tmp_path):
+    """A weekly run must not reformat the findings it verifies.
+
+    The claim here is quoted although YAML does not need the quotes, which is
+    how the shipped findings are written. A passing check learns one thing, so
+    one line moves and every other byte stays.
+    """
+    root = knowledge(tmp_path)
+    claim = "A small first step helps."
+    path = support.write_finding(
+        root / "findings",
+        support.finding(
+            "F-0001", claim=claim, source={"doi": "10.1234/example.valid"}
+        ),
+    )
+    # Quote a scalar that does not need quoting, the way the shipped files are.
+    path.write_text(
+        path.read_text().replace(
+            "claim: {}".format(claim), 'claim: "{}"'.format(claim)
+        )
+    )
+    before = path.read_text()
+    assert 'claim: "{}"'.format(claim) in before
+    assert run(root) == 0
+    after = path.read_text()
+    changed = [
+        (old, new)
+        for old, new in zip(before.splitlines(), after.splitlines())
+        if old != new
+    ]
+    assert changed == [("  checked_on: '2026-11-10'", "  checked_on: '2026-11-11'")], changed
+
+
+def test_a_second_run_over_the_same_date_writes_nothing(tmp_path):
+    """A run that learns nothing new leaves the file's bytes alone."""
+    root = knowledge(tmp_path)
+    path = support.write_finding(
+        root / "findings",
+        support.finding("F-0001", source={"doi": "10.1234/example.valid"}),
+    )
+    assert run(root) == 0
+    first = path.read_text()
+    assert run(root) == 0
+    assert path.read_text() == first

@@ -24,13 +24,27 @@ have their verification block updated.
 left byte-identical, a failing one is reported as `would quarantine`,
 and no file is written, moved or unlinked. Without it, a passing
 finding's verification block is refreshed and a failing one is moved.
+A file is only rewritten when the check changed it, and a write keeps
+the quoting and layout the file already had, so a weekly run's diff is
+the checked_on lines and nothing else.
+
+A quarantined finding keeps the `checked_on` it arrived with. That date
+records the last time the source was verified, and a quarantined finding
+is one that was not, so `quarantine_reason` carries the verdict.
 
 A check that cannot be completed now is not a finding about the source.
-HTTP 429, any 5xx, a timeout, a connection error or an unparseable
+HTTP 202, 429, any 5xx, a timeout, a connection error or an unparseable
 response is retried with a short increasing backoff and then reported
 as `could not check`, leaving the finding file exactly where it is.
 The script then exits non-zero so the run is visibly incomplete, and
 nothing is quarantined or unlinked for a service that was busy.
+
+Only HTTP 404 and 410 say the source is gone, and only those quarantine
+a finding on the existence check. Every other non-200 says something
+about our access to the page rather than about the page: 401, 403, 451
+and an unfollowed 3xx become `could not check` too. A page that answers
+202 to a scripted GET from one network and 200 from another is the case
+this rule exists for, and the run says which status it saw.
 
 Only paths inside the knowledge directory are checked. A path given
 outside it is refused, because quarantining it would move a file into
@@ -179,8 +193,24 @@ def pubmed_url(pmid: Any) -> str:
 
 
 def transient_status(status: int) -> bool:
-    """A status that says try later, not that the record is missing."""
-    return status == 429 or 500 <= status <= 599
+    """A status that says try later, not that the record is missing.
+
+    202 is Accepted: the server took the request and has not answered it yet,
+    which is what a bot-mitigated host returns to a scripted GET while it
+    decides. Retrying it costs one request and sometimes clears.
+    """
+    return status == 202 or status == 429 or 500 <= status <= 599
+
+
+def gone_status(status: int) -> bool:
+    """A status that says the source is not there, which is a finding's reason.
+
+    404 and 410 are the two an origin sends for a page that does not exist or
+    was withdrawn. Every other non-200, including 401, 403, 451 and any 3xx the
+    transport did not follow, says something about our access to the source, not
+    about the source, so it is a check that could not be completed.
+    """
+    return status in (404, 410)
 
 
 def _wait(seconds: float) -> None:
@@ -216,8 +246,10 @@ def fetch_json(
 def json_body(response: Response, label: str) -> Any:
     if transient_status(response.status):
         raise CouldNotCheck("HTTP {}".format(response.status))
-    if response.status != 200:
+    if gone_status(response.status):
         raise VerifyError("HTTP {}".format(response.status))
+    if response.status != 200:
+        raise CouldNotCheck("{} answered HTTP {}".format(label, response.status))
     body = response.body
     if isinstance(body, (dict, list)):
         return body
@@ -463,8 +495,14 @@ def verify_finding(
             else:
                 try:
                     response = fetch_response(transport, str(url))
-                    if response.status != 200:
+                    if gone_status(response.status):
                         raise VerifyError("HTTP {}".format(response.status))
+                    if response.status != 200:
+                        raise CouldNotCheck(
+                            "HTTP {} from {}, so the page was not read".format(
+                                response.status, url
+                            )
+                        )
                     resolved = True
                     expected_title = source.get("title")
                     if expected_title is None:
@@ -573,8 +611,18 @@ def quarantine_file(
     quarantine_dir: Path,
     reason: Optional[str] = None,
 ) -> Path:
-    """Write the updated finding into quarantine and remove the original."""
+    """Write the finding into quarantine and remove the original.
+
+    The verdict is recorded, the date is not. `exists`, `metadata_match` and
+    `retraction` say what this check found, and `quarantine_reason` says why the
+    finding is moving. `checked_on` keeps its old value: it records the last date
+    the source was verified, and a quarantined finding is one that was not, so
+    stamping today there would record that the tool ran.
+    """
     updated = apply_checked(data, result)
+    verification = data.get("verification")
+    if isinstance(verification, dict) and "checked_on" in verification:
+        updated["verification"]["checked_on"] = verification["checked_on"]
     updated["status"] = "quarantined"
     updated["quarantine_reason"] = reason or "; ".join(result["reasons"])
     errors = validate.schema_errors(updated, "finding")
@@ -614,7 +662,10 @@ def check_path(
     if result["ok"]:
         if move:
             updated = apply_checked(data, result)
-            files.write_frontmatter(path, updated, body)
+            # A run that learns nothing new writes nothing: the file's bytes
+            # are what a reader diffs, and a reformat is not a finding.
+            if updated != data:
+                files.write_frontmatter(path, updated, body)
         line = "{}: ok ({}; metadata {}; retraction {})".format(
             path,
             result["checked"]["exists"],

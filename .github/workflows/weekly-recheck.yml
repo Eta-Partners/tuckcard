@@ -26,7 +26,7 @@ jobs:
 
       - name: Re-check every shipped finding
         run: |
-          set -euo pipefail
+          set -uo pipefail
           findings=plugins/tuckcard/skills/cards-core/knowledge/findings
           count=$(find "$findings" -maxdepth 1 -name 'F-*.md' | wc -l | tr -d ' ')
           if [ "$count" -eq 0 ]; then
@@ -35,4 +35,18 @@ jobs:
             exit 0
           fi
           echo "Re-checking $count shipped findings against Crossref and PubMed."
-          python plugins/tuckcard/skills/cards-core/scripts/verify_citations.py
+          log="$(mktemp)"
+          python plugins/tuckcard/skills/cards-core/scripts/verify_citations.py 2>&1 | tee "$log"
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            # The step's own failure line names no finding, and the reason is
+            # one line in a long log. Put every failing line in the run summary
+            # so the reader sees which source and why without digging.
+            pattern='(^|: )(could not check|quarantine|would quarantine):'
+            if grep -qE "$pattern" "$log"; then
+              grep -E "$pattern" "$log" | sed 's/^/::error::/'
+            else
+              echo "::error::the check failed without naming a finding; see the log above"
+            fi
+            exit "$status"
+          fi

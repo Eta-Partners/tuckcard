@@ -65,5 +65,17 @@
   "https://www.cdc.gov/example/sleep.html": {
     "status": 200,
     "body": "<html><head><title>Sleep and Your Child</title></head><body><p>Guidance.</p></body></html>"
+  },
+  "https://www.cdc.gov/example/deferred.html": {
+    "status": 202,
+    "body": "<html><head><title>Checking your browser</title></head><body></body></html>"
+  },
+  "https://www.cdc.gov/example/missing.html": {
+    "status": 404,
+    "body": "Not found."
+  },
+  "https://www.cdc.gov/example/withdrawn.html": {
+    "status": 410,
+    "body": "Gone."
   }
 }
