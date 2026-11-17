@@ -24,8 +24,51 @@ import validate
 REQUIRED = ("id", "claim", "scopes", "grade", "direction", "status")
 
 
-def finding_entries(paths: Sequence[Path]) -> Tuple[List[Dict[str, Any]], List[str]]:
-    """Build the index entries, and one problem line per unreadable file."""
+def entry_for(
+    data: Dict[str, Any],
+    path: Path,
+    seen: Dict[str, Path],
+    problems: List[str],
+) -> Optional[Dict[str, Any]]:
+    """One entry from a finding's data, or None with a problem line appended."""
+    missing = [key for key in REQUIRED if key not in data]
+    if missing:
+        problems.append(
+            "{}: missing {}".format(path, ", ".join(missing))
+        )
+        return None
+    finding_id = str(data["id"])
+    if not files.FINDING_ID_RE.match(finding_id):
+        problems.append(
+            "{}: id {!r} is not F-NNNN or L-NNNN".format(path, finding_id)
+        )
+        return None
+    if finding_id in seen:
+        problems.append(
+            "{}: id {} is also used by {}".format(path, finding_id, seen[finding_id])
+        )
+        return None
+    seen[finding_id] = path
+    return {
+        "id": finding_id,
+        "claim": files.claim_one_line(data["claim"]),
+        "scopes": data["scopes"],
+        "grade": data["grade"],
+        "direction": data["direction"],
+        "status": data["status"],
+    }
+
+
+def finding_entries(
+    paths: Sequence[Path],
+    incoming: Sequence[Tuple[Path, Dict[str, Any]]] = (),
+) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """Build the index entries, and one problem line per unreadable file.
+
+    `incoming` holds (path, data) pairs for findings that are not on disk yet, so
+    a caller can be told that the index it is about to write will not build
+    before it writes anything else.
+    """
     entries: List[Dict[str, Any]] = []
     problems: List[str] = []
     seen = {}
@@ -35,34 +78,13 @@ def finding_entries(paths: Sequence[Path]) -> Tuple[List[Dict[str, Any]], List[s
         except Exception as error:  # noqa: BLE001 - report it as one line
             problems.append("{}: could not read finding: {}".format(path, error))
             continue
-        missing = [key for key in REQUIRED if key not in data]
-        if missing:
-            problems.append(
-                "{}: missing {}".format(path, ", ".join(missing))
-            )
-            continue
-        finding_id = str(data["id"])
-        if not files.FINDING_ID_RE.match(finding_id):
-            problems.append(
-                "{}: id {!r} is not F-NNNN or L-NNNN".format(path, finding_id)
-            )
-            continue
-        if finding_id in seen:
-            problems.append(
-                "{}: id {} is also used by {}".format(path, finding_id, seen[finding_id])
-            )
-            continue
-        seen[finding_id] = path
-        entries.append(
-            {
-                "id": finding_id,
-                "claim": files.claim_one_line(data["claim"]),
-                "scopes": data["scopes"],
-                "grade": data["grade"],
-                "direction": data["direction"],
-                "status": data["status"],
-            }
-        )
+        entry = entry_for(data, path, seen, problems)
+        if entry is not None:
+            entries.append(entry)
+    for path, data in incoming:
+        entry = entry_for(data, path, seen, problems)
+        if entry is not None:
+            entries.append(entry)
     entries.sort(key=lambda entry: entry["id"])
     return entries, problems
 
@@ -71,23 +93,37 @@ def render(entries: List[Dict[str, Any]]) -> str:
     return files.generated_header("index.py") + files.dump_yaml({"findings": entries})
 
 
+def entry_problems(entries: List[Dict[str, Any]]) -> List[str]:
+    """Whether these entries would make a valid index, before anything is written."""
+    return ["index: " + line for line in validate.schema_errors({"findings": entries}, "index")]
+
+
+def write_entries(
+    findings_dir: Path,
+    entries: List[Dict[str, Any]],
+    out_path: Optional[Path] = None,
+) -> Tuple[bool, int, List[str]]:
+    """Write entries that were already built. Returns (changed, count, problems)."""
+    schema_errors = entry_problems(entries)
+    if schema_errors:
+        return False, len(entries), schema_errors
+    out = out_path or (findings_dir / "index.yaml")
+    return files.write_if_changed(out, render(entries)), len(entries), []
+
+
 def regenerate(
     findings_dir: Path,
     out_path: Optional[Path] = None,
     paths: Optional[Sequence[Path]] = None,
+    incoming: Sequence[Tuple[Path, Dict[str, Any]]] = (),
 ) -> Tuple[bool, int, List[str]]:
     """Write the index. Returns (changed, entry count, problems)."""
     if paths is None:
         paths = files.finding_paths(findings_dir)
-    entries, problems = finding_entries(paths)
+    entries, problems = finding_entries(paths, incoming)
     if problems:
         return False, len(entries), problems
-    data = {"findings": entries}
-    schema_errors = validate.schema_errors(data, "index")
-    if schema_errors:
-        return False, len(entries), ["index: " + line for line in schema_errors]
-    out = out_path or (findings_dir / "index.yaml")
-    return files.write_if_changed(out, render(entries)), len(entries), []
+    return write_entries(findings_dir, entries, out_path)
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

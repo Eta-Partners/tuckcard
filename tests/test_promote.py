@@ -290,6 +290,47 @@ def test_a_promotion_that_could_not_check_writes_nothing(tmp_path, capsys, monke
     assert "https://api.crossref.org/works/10.1234%2Fexample.unrecorded" in out
 
 
+def test_a_pool_the_index_cannot_build_stops_the_promotion_before_it_writes(
+    tmp_path, capsys
+):
+    """The index is written last, so it must not be the first thing that fails.
+
+    An unreadable finding that has nothing to do with this promotion is enough
+    to break it. If that surfaced after the findings and rules were written,
+    the tree would be left neither as it was nor as it meant to be, so it is
+    checked before the first write.
+    """
+    knowledge = support.base_knowledge(tmp_path / "knowledge")
+    broken = knowledge / "findings/F-9001.md"
+    broken.write_text(
+        "---\nid: F-9001\nclaim: [unclosed\n---\nbody\n", encoding="utf-8"
+    )
+    source = tmp_path / "source"
+    support.write_finding(
+        source / "findings",
+        support.finding("L-0001", source={"doi": "10.1234/example.valid"}),
+    )
+    before = {
+        path: path.read_bytes()
+        for path in sorted(knowledge.rglob("*"))
+        if path.is_file()
+    }
+
+    assert promote_main(source, knowledge) == 1
+
+    after = {
+        path: path.read_bytes()
+        for path in sorted(knowledge.rglob("*"))
+        if path.is_file()
+    }
+    assert after == before
+    out = capsys.readouterr().out
+    assert "F-9001.md" in out
+    assert "could not read finding" in out
+    # Nothing was written, so nothing may claim it was.
+    assert "shipped" not in out
+
+
 def test_promotion_moves_a_fetch_verified_finding_to_active(tmp_path, capsys):
     knowledge = support.base_knowledge(tmp_path / "knowledge")
     source = tmp_path / "source"

@@ -381,13 +381,16 @@ def promote(
             final_findings[data["id"]] = data
 
     written_findings = []
+    # Said only once the writes have happened: a line that reads "shipped" is not
+    # something a refused promotion may print.
+    planned: List[str] = []
     for path, data, body, result, updated in results:
         updated["id"] = finding_map[str(data["id"])]
         if result["ok"]:
             destination = findings_dir / "{}.md".format(updated["id"])
             written_findings.append((destination, updated, body))
             final_findings[updated["id"]] = updated
-            summary.append(
+            planned.append(
                 "{}: {} -> {} (checked, shipped)".format(
                     path, data.get("id"), updated["id"]
                 )
@@ -397,7 +400,7 @@ def promote(
             updated["quarantine_reason"] = "; ".join(result["reasons"])
             destination = quarantine_dir / "{}.md".format(updated["id"])
             written_findings.append((destination, updated, body))
-            summary.append(
+            planned.append(
                 "{}: {} -> {} (quarantined: {})".format(
                     path, data.get("id"), updated["id"], updated["quarantine_reason"]
                 )
@@ -429,17 +432,36 @@ def promote(
             if rewritten != text:
                 gap_texts[path] = rewritten
 
+    # The index is written last, after the findings and rules, so it must not be
+    # the first thing that can fail: an unreadable finding already in the pool, or
+    # a duplicate id, stops the promotion here, before the write phase moves
+    # anything. The entries are built over the pool as it will be once this run's
+    # findings are written, which is what the index would hold.
+    shipped = [
+        (destination, updated)
+        for destination, updated, _ in written_findings
+        if destination.parent == findings_dir
+    ]
+    index_entries, index_problems = index.finding_entries(
+        files.finding_paths(findings_dir), shipped
+    )
+    index_problems += index.entry_problems(index_entries)
+    if index_problems:
+        errors.extend(index_problems)
+        return summary, errors
+
     # All checks passed: write.
     for destination, updated, body in written_findings:
         files.write_frontmatter(destination, updated, body)
+    summary.extend(planned)
     for path, text in rule_texts.items():
         files.write_if_changed(path, text)
     for path, text in gap_texts.items():
         path.write_text(text, encoding="utf-8")
         summary.append("{}: references rewritten".format(path))
 
-    changed, count, index_problems = index.regenerate(findings_dir)
-    for problem in index_problems:
+    changed, count, index_problems = index.write_entries(findings_dir, index_entries)
+    for problem in index_problems:  # checked above; kept as a guard
         errors.append(problem)
     if index_problems:
         return summary, errors
